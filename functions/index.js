@@ -1,11 +1,11 @@
 /**
  * Firebase Cloud Functions – send emails from NotificationQueue.
  * Template matches the old Google Apps Script sendUniversalEmail style.
- * Set env: EMAIL_USER (Gmail address), EMAIL_APP_PASSWORD (App Password), APP_URL (optional, for button link).
+ * Sends via Google Apps Script Web App (server-to-server).
+ * Set env: APPS_SCRIPT_EMAIL_URL, APPS_SCRIPT_EMAIL_SECRET, APP_URL (optional, for button link).
  */
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
-const nodemailer = require('nodemailer');
 
 admin.initializeApp();
 
@@ -15,9 +15,9 @@ function getConfig(key) {
   if (process.env[key]) return process.env[key];
   try {
     const c = functions.config();
-    if (key === 'EMAIL_USER' && c.email && c.email.user) return c.email.user;
-    if (key === 'EMAIL_APP_PASSWORD' && c.email && c.email.app_password) return c.email.app_password;
     if (key === 'APP_URL' && c.app && c.app.url) return c.app.url;
+    if (key === 'APPS_SCRIPT_EMAIL_URL' && c.appsscript && c.appsscript.email_url) return c.appsscript.email_url;
+    if (key === 'APPS_SCRIPT_EMAIL_SECRET' && c.appsscript && c.appsscript.email_secret) return c.appsscript.email_secret;
   } catch (e) {}
   return '';
 }
@@ -25,7 +25,7 @@ function getConfig(key) {
 const STATUS_COLORS = { INFO: '#3b82f6', SUCCESS: '#10b981', ALERT: '#ef4444', WARNING: '#f59e0b' };
 
 function buildHtml(reqId, eventTitle, title, details, color, appUrl) {
-  const finalUrl = appUrl || 'https://miklens.github.io/Inventory-management';
+  const finalUrl = appUrl || 'https://miklens.github.io/inventory-management-2.0/';
   let detailsHtml = '';
   if (details && details.length > 0) {
     detailsHtml = '<div style="margin: 20px 0; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden;">' +
@@ -71,15 +71,25 @@ async function getManagerAdminEmails() {
   return emails;
 }
 
-async function sendOne(to, subject, html, transporter) {
-  if (!to || !subject || !transporter) return;
-  const from = getConfig('EMAIL_USER');
-  await transporter.sendMail({
-    from: from,
-    to: to,
-    subject: subject,
-    html: html
+async function sendViaAppsScript(to, subject, html, cc) {
+  const url = (getConfig('APPS_SCRIPT_EMAIL_URL') || '').trim();
+  const secret = (getConfig('APPS_SCRIPT_EMAIL_SECRET') || '').trim();
+  if (!url || !secret) throw new Error('APPS_SCRIPT_EMAIL_URL or APPS_SCRIPT_EMAIL_SECRET not set');
+  if (!to) throw new Error('No recipient (to)');
+  const payload = { secret, to, subject: subject || '', html: html || '' };
+  if (cc && String(cc).trim()) payload.cc = String(cc).trim();
+  const body = new URLSearchParams({ payload: JSON.stringify(payload) }).toString();
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body
   });
+  const text = await res.text();
+  if (!res.ok) throw new Error('Apps Script email failed: HTTP ' + res.status + ' ' + res.statusText + ' — ' + text.slice(0, 500));
+  try {
+    const data = JSON.parse(text);
+    if (data && (data.result === 'error' || data.status === 'error')) throw new Error(data.error || data.message || 'Apps Script returned error');
+  } catch (_) {}
 }
 
 exports.processNotificationQueue = functions.firestore
@@ -91,18 +101,13 @@ exports.processNotificationQueue = functions.firestore
     const alreadySent = data.sent === true;
     if (alreadySent || !type) return null;
 
-    const emailUser = getConfig('EMAIL_USER');
-    const emailPass = getConfig('EMAIL_APP_PASSWORD');
     const appUrl = getConfig('APP_URL');
-    if (!emailUser || !emailPass) {
-      console.warn('processNotificationQueue: EMAIL_USER or EMAIL_APP_PASSWORD not set; skipping email');
+    const appsScriptUrl = (getConfig('APPS_SCRIPT_EMAIL_URL') || '').trim();
+    const appsScriptSecret = (getConfig('APPS_SCRIPT_EMAIL_SECRET') || '').trim();
+    if (!appsScriptUrl || !appsScriptSecret) {
+      console.warn('processNotificationQueue: APPS_SCRIPT_EMAIL_URL or APPS_SCRIPT_EMAIL_SECRET not set; skipping email');
       return null;
     }
-
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: { user: emailUser, pass: emailPass }
-    });
 
     const payload = data.data || {};
     let to = '';
@@ -204,7 +209,7 @@ exports.processNotificationQueue = functions.firestore
 
     try {
       const html = buildHtml(reqId, eventTitle, title, details, color, appUrl);
-      await sendOne(to, subject, html, transporter);
+      await sendViaAppsScript(to, subject, html, '');
       await snap.ref.update({ sent: true, sentAt: new Date().toISOString() });
     } catch (err) {
       console.error('processNotificationQueue send failed:', err);
