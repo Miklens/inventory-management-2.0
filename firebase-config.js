@@ -13,7 +13,7 @@
     storageBucket: 'inventory-management-d2ace.firebasestorage.app',
     messagingSenderId: '79940113871',
     appId: '1:79940113871:web:fbf769a8ca5999e6296eba',
-    APP_SCRIPT_EMAIL_URL: 'https://script.google.com/macros/s/AKfycbwUKaGQRwWqiOSnkpihQqYhbqIuvcL_bWTOwiLmWKIxV8YO0pplDnIfpmZsYwT_KDsFSQ/exec',
+    APP_SCRIPT_EMAIL_URL: 'https://script.google.com/macros/s/AKfycbyI44UPq16C9dmvZQtQMrbRHJ6mHBVIehPs2b1PAjJQeT2S0s8PiLyvQvtQm_x0kh5VNA/exec',
     APP_URL: 'https://miklens.github.io/inventory-management-2.0/'
   };
   if (typeof global !== 'undefined') global.FIREBASE_CONFIG = config;
