@@ -53,10 +53,10 @@
     }
   }
 
-  var STATUS_COLORS = { INFO: '#3b82f6', SUCCESS: '#10b981', ALERT: '#ef4444', WARNING: '#f59e0b' };
+  var STATUS_COLORS = { INFO: '#3b82f6', SUCCESS: '#10b981', ALERT: '#ef4444', WARNING: '#f59e0b', ERROR: '#ef4444' };
 
   function buildHtml(reqId, eventTitle, title, details, color, appUrl) {
-    var finalUrl = (appUrl || backendConfig.APP_URL || 'https://miklens.github.io/Inventory-management').trim();
+    var finalUrl = (appUrl || backendConfig.APP_URL || 'https://miklens.github.io/inventory-management-2.0/').trim();
     var detailsHtml = '';
     if (details && details.length > 0) {
       var cellWrap = 'word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; white-space: normal;';
@@ -345,83 +345,7 @@
     return { to: to, subject: subject, html: html, cc: cc || '' };
   }
 
-  function sendEmailViaAppsScript(payload) {
-    var url = (backendConfig.APP_SCRIPT_EMAIL_URL || '').trim();
-    var secret = (backendConfig.APP_SCRIPT_EMAIL_SECRET || '').trim();
-    if (!url || !secret) {
-      console.warn('Email skipped: APP_SCRIPT_EMAIL_URL or APP_SCRIPT_EMAIL_SECRET not set in config.');
-      return;
-    }
-    if (!payload || !payload.to) {
-      console.warn('Email skipped: no recipient (to). Check Manager Email on the requisition or add a user with Role Manager/Admin in Firestore Users.');
-      return;
-    }
-    try {
-      var data = {
-        secret: secret,
-        to: payload.to,
-        subject: payload.subject || '',
-        html: payload.html || ''
-      };
-      if (payload.cc && String(payload.cc).trim()) data.cc = String(payload.cc).trim();
-      var payloadStr = JSON.stringify(data);
-      /* Form POST in iframe. Email sends; 403 in console is from iframe loading script response – harmless. */
-      var iframe = document.createElement('iframe');
-      iframe.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
-      iframe.name = 'appsScriptEmail_' + Date.now();
-      document.body.appendChild(iframe);
-      var form = document.createElement('form');
-      form.action = url;
-      form.method = 'POST';
-      form.target = iframe.name;
-      var input = document.createElement('input');
-      input.name = 'payload';
-      input.value = payloadStr;
-      form.appendChild(input);
-      document.body.appendChild(form);
-      form.submit();
-      console.log('Email sent (form POST) to:', payload.to);
-      setTimeout(function () {
-        try { document.body.removeChild(form); document.body.removeChild(iframe); } catch (e) {}
-      }, 3000);
-    } catch (e) {
-      console.warn('Apps Script email failed', e);
-    }
-  }
-
-  /** Log that this employee submitted a request (for reminder: only remind those who have not requested in 2 days). */
-  function logRequestToReminderSheet(email, name) {
-    var url = (backendConfig.APP_SCRIPT_EMAIL_URL || '').trim();
-    var secret = (backendConfig.APP_SCRIPT_EMAIL_SECRET || '').trim();
-    if (!url || !secret || !email) return;
-    try {
-      var payloadStr = JSON.stringify({
-        secret: secret,
-        action: 'log_request',
-        email: String(email).toLowerCase().trim(),
-        name: String(name || '').trim()
-      });
-      var iframe = document.createElement('iframe');
-      iframe.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
-      iframe.name = 'appsScriptLog_' + Date.now();
-      document.body.appendChild(iframe);
-      var form = document.createElement('form');
-      form.action = url;
-      form.method = 'POST';
-      form.target = iframe.name;
-      var input = document.createElement('input');
-      input.name = 'payload';
-      input.value = payloadStr;
-      form.appendChild(input);
-      document.body.appendChild(form);
-      form.submit();
-      setTimeout(function () {
-        try { document.body.removeChild(form); document.body.removeChild(iframe); } catch (e) {}
-      }, 2000);
-    } catch (e) {}
-  }
-
-  /** Optional: push to NotificationQueue for in-app notifications; if Apps Script URL is set, also send email for free. */
+  /** Optional: push to NotificationQueue for email + in-app notifications. */
   async function pushNotificationQueue(type, data) {
     if (!db) return;
     try {
@@ -431,18 +355,6 @@
         sent: false,
         data: data && typeof data === 'object' ? data : {}
       });
-      if (backendConfig.APP_SCRIPT_EMAIL_URL && backendConfig.APP_SCRIPT_EMAIL_SECRET) {
-        try {
-          var emailPayload = await buildEmailContent(type, data);
-          if (emailPayload && emailPayload.to) {
-            sendEmailViaAppsScript(emailPayload);
-          } else if (!emailPayload || !emailPayload.to) {
-            console.warn('Email skipped: no recipient for type=', type, '- set Manager Email on the request or add Manager/Admin users in Firestore.');
-          }
-        } catch (e) {
-          console.warn('Apps Script email failed', e);
-        }
-      }
     } catch (e) {
       console.warn('NotificationQueue write failed', e);
     }
@@ -1061,7 +973,6 @@
       unit: payload.Unit || '',
       requestedAt: payload.CreatedDate || new Date().toISOString()
     });
-    logRequestToReminderSheet(payload.EmployeeEm || '', payload.EmployeeName || '');
     return ok({ requestId: newId });
   }
 
@@ -2009,7 +1920,6 @@
         requestedByName: p.name || '',
         formulaBasis: p.formulaBasis || ''
       });
-      logRequestToReminderSheet(p.email || '', p.name || '');
       return ok({ id: id });
     },
     get_formula_requests: async function (p) {
