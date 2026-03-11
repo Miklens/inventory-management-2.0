@@ -345,6 +345,44 @@
     return { to: to, subject: subject, html: html, cc: cc || '' };
   }
 
+  function sendEmailViaAppsScript(payload) {
+    var url = (backendConfig.APP_SCRIPT_EMAIL_URL || '').trim();
+    if (!url || !payload || !payload.to) return;
+    try {
+      var data = { to: payload.to, subject: payload.subject || '', html: payload.html || '' };
+      if (payload.cc && String(payload.cc).trim()) data.cc = String(payload.cc).trim();
+      var payloadStr = JSON.stringify(data);
+      if (typeof fetch === 'function') {
+        try {
+          fetch(url, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+            body: 'payload=' + encodeURIComponent(payloadStr)
+          });
+          return;
+        } catch (e) {}
+      }
+      var iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden';
+      iframe.name = 'appsScriptEmail_' + Date.now();
+      document.body.appendChild(iframe);
+      var form = document.createElement('form');
+      form.action = url;
+      form.method = 'POST';
+      form.target = iframe.name;
+      var input = document.createElement('input');
+      input.name = 'payload';
+      input.value = payloadStr;
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+      setTimeout(function () {
+        try { document.body.removeChild(form); document.body.removeChild(iframe); } catch (e) {}
+      }, 3000);
+    } catch (e) {}
+  }
+
   /** Optional: push to NotificationQueue for email + in-app notifications. */
   async function pushNotificationQueue(type, data) {
     if (!db) return;
@@ -355,6 +393,10 @@
         sent: false,
         data: data && typeof data === 'object' ? data : {}
       });
+      try {
+        var emailPayload = await buildEmailContent(String(type), data);
+        if (emailPayload && emailPayload.to) sendEmailViaAppsScript(emailPayload);
+      } catch (e) {}
     } catch (e) {
       console.warn('NotificationQueue write failed', e);
     }
@@ -1978,7 +2020,13 @@
     }
     try {
       backendConfig = config && typeof config === 'object' ? config : {};
-      var app = global.firebase.initializeApp(config);
+      var firebaseConfig = {};
+      var keys = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId', 'measurementId'];
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (backendConfig[k]) firebaseConfig[k] = backendConfig[k];
+      }
+      var app = (global.firebase.apps && global.firebase.apps.length) ? global.firebase.app() : global.firebase.initializeApp(firebaseConfig);
       db = global.firebase.firestore();
       return true;
     } catch (e) {
